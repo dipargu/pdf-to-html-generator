@@ -56,6 +56,12 @@ MIN_USOS_PARA_CLASE = 2
 # Bandera de PyMuPDF que marca un span como negrita
 FLAG_NEGRITA = 2**4
 
+# Marca interna que representa un salto de línea real dentro de un bloque.
+# Se usa un carácter del área privada de Unicode (1 solo carácter) para que no
+# lo alteren ni el escape de HTML ni la normalización de espacios; al emitir el
+# HTML se sustituye por la etiqueta <br>.
+MARCADOR_SALTO = "\ue000"
+
 # Viñetas que pueden iniciar un elemento de lista no ordenada
 # (incluye los guiones unicode −, –, — y el guion normal)
 PATRON_VINETA = re.compile(r"^([•·▪‣◦○●\-–—−*+oQ])\s+")
@@ -111,13 +117,18 @@ CSS_BASE = [
     "* { box-sizing: border-box; }",
     "body {",
     "    margin: 0;",
-    "    background: #ffffff;",
+    "    background-color: #525659;",
     "    color: #111827;",
+    "    padding: 20px 0;",
+    "}",
+    "h1, h2, h3 {",
+    "    font-weight: normal;",
     "}",
     ".contenido {",
-    "    max-width: 800px;",
+    "    background: #ffffff;",
     "    margin: 0 auto;",
-    "    padding: 40px 24px;",
+    "    box-shadow: 0 4px 10px rgba(0,0,0,0.3);",
+    "    padding: 50px 60px;",
     "}",
     ".imagen {",
     "    margin: 24px 0;",
@@ -276,6 +287,29 @@ def _paginas_a_omitir(texto: str) -> set:
     return omitidas
 
 
+def _salto_de_linea(bbox_previa: tuple, bbox_actual: tuple,
+                    ancho_bloque: float) -> bool:
+    """Deduce si entre dos líneas de un bloque hay un salto de línea real.
+
+    Se considera salto real (en el HTML se separan con ``<br>``) cuando la
+    línea anterior no ocupa el ancho del bloque —el autor cortó el texto a
+    mano, como en un título de dos líneas— o cuando la separación vertical
+    entre ambas líneas supera el interlineado habitual de un párrafo.
+
+    Recibe el bbox de la línea anterior, el de la línea actual y el ancho de
+    la línea más ancha del bloque. Devuelve True si el salto es real.
+    """
+    x0_previa, y0_previa, x1_previa, y1_previa = bbox_previa
+    y0_actual = bbox_actual[1]
+
+    alto_linea = max(y1_previa - y0_previa, 1.0)
+    if y0_actual - y0_previa > alto_linea * 1.6:
+        return True
+
+    ancho_linea = max(x1_previa - x0_previa, 0.0)
+    return ancho_linea < ancho_bloque * 0.85
+
+
 def _variables_estilo(textos: list) -> dict:
     """Extrae las variables globales de estilo de las páginas de instrucciones.
 
@@ -355,8 +389,9 @@ def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> tuple:
         run es una tupla (texto, estilo), la alineación es "center" o "left" y
         el fondo es un color #rrggbb o None.
       - ``{"tipo": "tabla", "filas": ..., "cabecera": ...}`` para las tablas.
-    - ``variables`` es un diccionario con los colores base extraídos de la
-      página de instrucciones ("fondo" y/o "texto").
+    - ``variables`` es un diccionario con los valores de estilo base: los
+      colores extraídos de la página de instrucciones ("fondo" y/o "texto") y
+      el "ancho" real (en puntos) de la primera página válida del PDF.
 
     Los bloques de texto que caen dentro de una tabla se descartan, de modo que
     el contenido de la tabla no se duplica en el HTML.
@@ -384,6 +419,10 @@ def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> tuple:
             if numero_pagina in omitidas:
                 continue                             # se omite su contenido
 
+            # Ancho real de la primera página válida: define el ancho del folio
+            if "ancho" not in variables:
+                variables["ancho"] = round(float(pagina.rect.width), 2)
+
             bloques_pagina = pagina.get_text("dict").get("blocks", [])
             fondos = _fondos_pagina(pagina)
             tablas = _tablas_pagina(pagina)
@@ -408,8 +447,29 @@ def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> tuple:
                         })
                     continue
 
+                lineas = bloque.get("lines", [])
+                # Línea más ancha del bloque: sirve para distinguir un ajuste
+                # automático de párrafo de un salto de línea escrito a mano.
+                ancho_bloque = max(
+                    (linea.get("bbox", (0, 0, 0, 0))[2]
+                     - linea.get("bbox", (0, 0, 0, 0))[0] for linea in lineas),
+                    default=0.0,
+                )
+
                 runs = []
-                for linea in bloque.get("lines", []):
+                bbox_previa = None
+                for linea in lineas:
+                    bbox_linea = linea.get("bbox", (0, 0, 0, 0))
+                    # Entre líneas: <br> si el salto es real, espacio si no
+                    if (runs and bbox_previa is not None
+                            and _salto_de_linea(bbox_previa, bbox_linea,
+                                                ancho_bloque)):
+                        # El espacio que se añadió al cerrar la línea anterior
+                        # se sustituye por el salto para no dejar un hueco
+                        # visible antes del <br>.
+                        runs[-1] = (runs[-1][0].rstrip(" ") + MARCADOR_SALTO,
+                                    runs[-1][1])
+
                     for span in linea.get("spans", []):
                         texto = span.get("text", "")
                         if not texto:
@@ -428,8 +488,10 @@ def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> tuple:
                         else:
                             runs.append((texto, estilo))
 
-                    if runs and not runs[-1][0].endswith((" ", "\n")):
+                    if (runs
+                            and not runs[-1][0].endswith((" ", "\n", MARCADOR_SALTO))):
                         runs[-1] = (runs[-1][0] + " ", runs[-1][1])
+                    bbox_previa = bbox_linea
 
                 runs = _normalizar_runs(runs)
                 if not runs:
@@ -642,8 +704,17 @@ def _runs_del_nodo(nodo: dict) -> list:
 
 
 def _texto_del_nodo(nodo: dict) -> str:
-    """Devuelve el texto plano de un nodo, uniendo los runs con espacios."""
-    return " ".join("".join(t for t, _ in runs) for runs in _runs_del_nodo(nodo))
+    """Devuelve el texto plano de un nodo, uniendo los runs con espacios.
+
+    Las marcas de salto de línea se sustituyen por un espacio para las
+    búsquedas de texto (anclajes, enlaces). Al seguir ocupando un solo
+    carácter, los índices que se calculan sobre este texto coinciden con los
+    de las listas de runs.
+    """
+    texto = " ".join(
+        "".join(t for t, _ in runs) for runs in _runs_del_nodo(nodo)
+    )
+    return texto.replace(MARCADOR_SALTO, " ")
 
 
 def _quitar_duplicados_consecutivos(nodos: list) -> list:
@@ -679,20 +750,42 @@ def _estilo_dominante(items: list):
     return max(frecuencia, key=frecuencia.get)
 
 
-def _atributo_color_lista(items: list, conteo: dict, clases: dict) -> str:
-    """Color del elemento <ol>/<ul> para que los marcadores lo hereden.
+def _atributos_lista(items: list, conteo: dict, clases: dict,
+                     centrada: bool = False) -> str:
+    """Atributos del elemento <ol>/<ul>: color heredado y centrado.
 
-    Los marcadores (puntos y números) toman el color del elemento de la lista,
-    no del <span> interior, por lo que si no se fija el color en el padre el
+    Los marcadores (puntos y números) toman el color del propio <ol>/<ul>, no
+    del <span> interior, por lo que si no se fija el color en el padre el
     navegador los pinta en negro. Se aplica la clase del estilo dominante si
     existe o, si no, un color inline extraído de ese mismo estilo.
+
+    Si la lista va precedida de un bloque centrado (el título del índice), se
+    empaqueta con ``width: fit-content`` y se centra con ``margin: 0 auto``,
+    manteniendo el texto de los elementos alineado a la izquierda.
     """
     estilo = _estilo_dominante(items)
-    if estilo is None:
-        return ""
-    if conteo.get(estilo, 0) >= MIN_USOS_PARA_CLASE and estilo in clases:
-        return f' class="{clases[estilo]}"'
-    return f' style="color: {estilo[2]};"'
+    clase = ""
+    if (estilo is not None
+            and conteo.get(estilo, 0) >= MIN_USOS_PARA_CLASE
+            and estilo in clases):
+        clase = f' class="{clases[estilo]}"'
+
+    declaraciones = []
+    if estilo is not None and not clase:
+        declaraciones.append(f"color: {estilo[2]}")
+    if centrada:
+        declaraciones.append("width: fit-content")
+        declaraciones.append("margin: 0 auto")
+        declaraciones.append("text-align: left")
+
+    if not declaraciones:
+        return clase
+    return f'{clase} style="{"; ".join(declaraciones)};"'
+
+
+def _texto_html(texto: str) -> str:
+    """Escapa un texto para HTML y convierte las marcas de salto en <br>."""
+    return html.escape(texto).replace(MARCADOR_SALTO, "<br>")
 
 
 def _elemento_html(etiqueta: str, runs: list, conteo: dict, clases: dict,
@@ -721,7 +814,7 @@ def _elemento_html(etiqueta: str, runs: list, conteo: dict, clases: dict,
     atributo_bloque = f' style="{bloque_css}"' if bloque_css else ""
 
     if segmentos is None and len(runs) == 1 and not href:
-        texto = html.escape(runs[0][0])
+        texto = _texto_html(runs[0][0])
         estilo = runs[0][1]
         if conteo[estilo] >= MIN_USOS_PARA_CLASE:
             atributo = f'class="{clases[estilo]}"{atributo_bloque}'
@@ -737,7 +830,7 @@ def _elemento_html(etiqueta: str, runs: list, conteo: dict, clases: dict,
 
     contenido = "".join(
         (f'<a href="{destino}">' if destino else "")
-        + f"<span {_atributo_estilo(estilo, conteo, clases)}>{html.escape(texto)}</span>"
+        + f"<span {_atributo_estilo(estilo, conteo, clases)}>{_texto_html(texto)}</span>"
         + ("</a>" if destino else "")
         for texto, estilo, destino in segmentos
     )
@@ -770,7 +863,19 @@ def _agrupar_nodos(bloques: list, tamano_cuerpo: float) -> list:
                     and nodos[-1]["ordenada"] == ordenada):
                 nodos[-1]["items"].append(runs)
             else:
-                nodos.append({"tipo": "lista", "ordenada": ordenada, "items": [runs]})
+                # La lista se centra si el bloque inmediatamente anterior era
+                # un bloque centrado (el título "Indice:" de la página)
+                centrada = bool(
+                    nodos
+                    and nodos[-1]["tipo"] == "parrafo"
+                    and nodos[-1].get("alineacion") == "center"
+                )
+                nodos.append({
+                    "tipo": "lista",
+                    "ordenada": ordenada,
+                    "items": [runs],
+                    "centrada": centrada,
+                })
         else:
             nodos.append({
                 "tipo": "parrafo",
@@ -846,7 +951,10 @@ def _coincidencias_enlaces(texto: str) -> list:
     """Busca los textos que deben convertirse en enlaces internos.
 
     Devuelve una lista de tuplas (inicio, fin, destino) por índice de carácter.
+    Las marcas de salto se leen como espacios (siguen ocupando un carácter), de
+    modo que los índices devueltos son válidos sobre las listas de runs.
     """
+    texto = texto.replace(MARCADOR_SALTO, " ")
     coincidencias = []
     for patron, destino in ENLACES_INTERNOS:
         for coincidencia in patron.finditer(texto):
@@ -1095,6 +1203,12 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
     ]
     salida += [f"        {regla}" for regla in CSS_BASE]
 
+    # Ancho dinámico del folio: el real de la primera página válida del PDF
+    if variables.get("ancho"):
+        salida.append("")
+        salida.append("        /* Ancho real del folio tomado del PDF */")
+        salida.append(f"        .contenido {{ width: {variables['ancho']:g}px; }}")
+
     # Color de texto base extraído de las instrucciones (página de análisis)
     if variables.get("texto"):
         salida.append("")
@@ -1143,10 +1257,13 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
             etiqueta = "ol" if nodo["ordenada"] else "ul"
             # Las listas ordenadas son romanas: <ol type="I">
             atributo_tipo = ' type="I"' if etiqueta == "ol" else ""
-            # El color va en el padre para que los marcadores lo hereden
-            atributo_color = _atributo_color_lista(nodo["items"], conteo, clases)
+            # El color va en el padre para que los marcadores lo hereden y, si
+            # el bloque anterior estaba centrado, la lista se centra empaquetada
+            atributos = _atributos_lista(
+                nodo["items"], conteo, clases, nodo.get("centrada", False)
+            )
             enlaces = nodo.get("enlaces_item")
-            salida.append(f"{indent}<{etiqueta}{atributo_tipo}{atributo_color}>")
+            salida.append(f"{indent}<{etiqueta}{atributo_tipo}{atributos}>")
             for posicion, runs in enumerate(nodo["items"]):
                 salida.append(_elemento_html(
                     "li", runs, conteo, clases, indent=indent + "    ",
