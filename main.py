@@ -117,9 +117,8 @@ CSS_BASE = [
     "* { box-sizing: border-box; }",
     "body {",
     "    margin: 0;",
-    "    background-color: #525659;",
+    "    background-color: #ffffff;",
     "    color: #111827;",
-    "    padding: 20px 0;",
     "}",
     "h1, h2, h3 {",
     "    font-weight: normal;",
@@ -127,7 +126,6 @@ CSS_BASE = [
     ".contenido {",
     "    background: #ffffff;",
     "    margin: 0 auto;",
-    "    box-shadow: 0 4px 10px rgba(0,0,0,0.3);",
     "    padding: 50px 60px;",
     "}",
     ".imagen {",
@@ -538,12 +536,21 @@ def _detectar_lista(runs: list) -> tuple:
 
     Devuelve (tipo, runs), donde tipo es "ul" (viñeta), "ol" (numeración
     romana) o None si el bloque es un párrafo normal.
+
+    Dentro de un elemento de lista las marcas de salto de línea no deben
+    convertirse en ``<br>``: el marcador ("I. Apartado 1 (ASANEC)") y su texto
+    tienen que quedar limpios en una sola línea del ``<li>``. Por eso se
+    sustituyen por un espacio antes de normalizar los runs.
     """
     texto = "".join(t for t, _ in runs)
     for patron, tipo in ((PATRON_ROMANO, "ol"), (PATRON_VINETA, "ul")):
         coincidencia = patron.match(texto)
         if coincidencia:
             resto = _recortar_inicio(runs, coincidencia.end())
+            resto = [
+                (texto.replace(MARCADOR_SALTO, " "), estilo)
+                for texto, estilo in resto
+            ]
             return tipo, _normalizar_runs(resto)
     return None, runs
 
