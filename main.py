@@ -7,6 +7,10 @@ imagenes/ con copias de las imágenes elegidas y un bloque <style> con
 las clases CSS de los estilos que se repiten en el documento.
 """
 
+# ===========================================================================
+# IMPORTS
+# ===========================================================================
+
 import html
 import os
 import re
@@ -16,9 +20,10 @@ import customtkinter as ctk
 import pymupdf as fitz  # PyMuPDF
 from tkinter import filedialog
 
-# ---------------------------------------------------------------------------
-# Configuración global del tema
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# CONFIGURACIÓN Y CONSTANTES GLOBALES
+# ===========================================================================
+
 ctk.set_appearance_mode("dark")          # "dark" | "light" | "system"
 ctk.set_default_color_theme("blue")      # "blue" | "green" | "dark-blue"
 
@@ -41,9 +46,9 @@ PDF_FILETYPES = [
     ("Todos los archivos", "*.*"),
 ]
 
-# ---------------------------------------------------------------------------
-# Conversión de PDF a HTML
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# PATRONES (EXPRESIONES REGULARES) Y CONSTANTES DE ANÁLISIS
+# ===========================================================================
 
 # Nº mínimo de apariciones de un estilo para convertirlo en clase CSS
 MIN_USOS_PARA_CLASE = 2
@@ -72,6 +77,19 @@ PATRON_APARTADO = re.compile(r"^\s*APARTADO\s+(\d+)", re.IGNORECASE)
 # Línea final del autor ("Autor:alumno/ iesmarenostrum")
 PATRON_AUTOR = re.compile(r"Autor\s*:\s*(.+)$", re.IGNORECASE)
 
+# Instrucciones de estilo que suelen aparecer en la página de análisis
+# ("Color de fondo de los bloques: #6699FF", "El color del texto: #3333CC").
+# De esa página solo se extraen estas variables; su texto no se imprime.
+PATRON_COLOR_FONDO = re.compile(
+    r"color\s+de\s+fondo(?:\s+de\s+los\s+bloques)?\s*:?\s*"
+    r"(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})",
+    re.IGNORECASE,
+)
+PATRON_COLOR_TEXTO = re.compile(
+    r"color\s+del\s+texto\s*:?\s*(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})",
+    re.IGNORECASE,
+)
+
 # Textos que se convierten en enlaces internos (patrón -> ancla destino)
 ENLACES_INTERNOS = [
     (re.compile(r"\(?\s*vuelve al inicio\s*\)?", re.IGNORECASE), "#inicio"),
@@ -85,7 +103,10 @@ ENLACES_IMAGENES = {
     "users1.gif": ("usuarios.html", "Enlace a página de usuarios"),
 }
 
-# Hoja de estilos base del documento generado
+# ===========================================================================
+# HOJA DE ESTILOS BASE DEL HTML GENERADO
+# ===========================================================================
+
 CSS_BASE = [
     "* { box-sizing: border-box; }",
     "body {",
@@ -120,6 +141,11 @@ CSS_BASE = [
     "    padding: 8px;",
     "}",
 ]
+
+
+# ===========================================================================
+# LÓGICA DE EXTRACCIÓN DEL PDF
+# ===========================================================================
 
 
 def _color_a_hex(color: int) -> str:
@@ -250,6 +276,27 @@ def _paginas_a_omitir(texto: str) -> set:
     return omitidas
 
 
+def _variables_estilo(textos: list) -> dict:
+    """Extrae las variables globales de estilo de las páginas de instrucciones.
+
+    Las páginas marcadas como "a omitir" no se imprimen, pero sí se analizan
+    para buscar frases como "Color de fondo de los bloques: #6699FF" o "El
+    color del texto: #3333CC". Devuelve un diccionario con las claves "fondo"
+    y/o "texto" (en minúsculas) solo si se han encontrado.
+    """
+    variables = {}
+    for texto in textos:
+        if "fondo" not in variables:
+            coincidencia = PATRON_COLOR_FONDO.search(texto)
+            if coincidencia:
+                variables["fondo"] = coincidencia.group(1).lower()
+        if "texto" not in variables:
+            coincidencia = PATRON_COLOR_TEXTO.search(texto)
+            if coincidencia:
+                variables["texto"] = coincidencia.group(1).lower()
+    return variables
+
+
 def _tablas_pagina(pagina) -> list:
     """Detecta las tablas de una página con ``page.find_tables()``.
 
@@ -294,37 +341,50 @@ def _tabla_que_contiene(bbox: tuple, tablas: list):
     return None
 
 
-def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> list:
+def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> tuple:
     """Extrae de la página los textos y las tablas en su orden de lectura.
 
     Todas las líneas y spans de un mismo bloque se unen en una única lista de
     runs, separando las líneas con un espacio para no cortar las frases.
 
-    Devuelve una lista de diccionarios, uno por elemento del documento:
-    - ``{"tipo": "texto", "runs": ..., "tamano": ..., "alineacion": ...,
-      "fondo": ...}`` para los párrafos y títulos, donde cada run es una tupla
-      (texto, estilo), la alineación es "center" o "left" y el fondo es un
-      color #rrggbb o None.
-    - ``{"tipo": "tabla", "filas": ..., "cabecera": ...}`` para las tablas.
+    Devuelve una tupla ``(elementos, variables)``:
+    - ``elementos`` es una lista de diccionarios, uno por elemento visible del
+      documento:
+      - ``{"tipo": "texto", "runs": ..., "tamano": ..., "alineacion": ...,
+        "fondo": ..., "padding": ...}`` para los párrafos y títulos, donde cada
+        run es una tupla (texto, estilo), la alineación es "center" o "left" y
+        el fondo es un color #rrggbb o None.
+      - ``{"tipo": "tabla", "filas": ..., "cabecera": ...}`` para las tablas.
+    - ``variables`` es un diccionario con los colores base extraídos de la
+      página de instrucciones ("fondo" y/o "texto").
 
     Los bloques de texto que caen dentro de una tabla se descartan, de modo que
     el contenido de la tabla no se duplica en el HTML.
 
-    ``paginas_omitidas`` es un conjunto de números de página (1 = primera) que
-    no se procesan; si es None o está vacío se leen todas las páginas.
+    ``paginas_omitidas`` es un conjunto de números de página (1 = primera). Esas
+    páginas no se imprimen, pero sí se analizan para extraer las variables
+    globales de estilo (colores) que se aplican al resto del documento.
     """
     omitidas = set(paginas_omitidas or ())
     elementos = []
     with fitz.open(pdf_path) as documento:
-        # Solo se descartan las páginas indicadas por el usuario
-        paginas = [
-            pagina
-            for numero_pagina, pagina in enumerate(documento, start=1)
-            if numero_pagina not in omitidas
-        ]
-        contenido = [pagina.get_text("dict").get("blocks", []) for pagina in paginas]
+        paginas = list(documento)
 
-        for pagina, bloques_pagina in zip(paginas, contenido):
+        # Páginas omitidas: modo "solo análisis". De ellas solo se leen las
+        # instrucciones de estilo (colores); su texto no se imprime.
+        textos_analisis = [
+            pagina.get_text("text")
+            for numero_pagina, pagina in enumerate(paginas, start=1)
+            if numero_pagina in omitidas
+        ]
+        variables = _variables_estilo(textos_analisis)
+        fondo_base = variables.get("fondo")
+
+        for numero_pagina, pagina in enumerate(paginas, start=1):
+            if numero_pagina in omitidas:
+                continue                             # se omite su contenido
+
+            bloques_pagina = pagina.get_text("dict").get("blocks", [])
             fondos = _fondos_pagina(pagina)
             tablas = _tablas_pagina(pagina)
             tablas_emitidas = set()
@@ -372,14 +432,27 @@ def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> list:
                         runs[-1] = (runs[-1][0] + " ", runs[-1][1])
 
                 runs = _normalizar_runs(runs)
-                if runs:
-                    elementos.append({
-                        "tipo": "texto",
-                        "runs": runs,
-                        "tamano": max(estilo[1] for _, estilo in runs),
-                        "alineacion": _alineacion(bloque, pagina.rect.width),
-                        "fondo": _color_fondo(bbox, fondos),
-                    })
+                if not runs:
+                    continue
+
+                # Fondo del bloque: se detecta por los rectángulos dibujados
+                # bajo el texto o, si no hay, se cruza con la regla extraída de
+                # la página de instrucciones (títulos "APARTADO N").
+                fondo = _color_fondo(bbox, fondos)
+                es_apartado = bool(PATRON_APARTADO.match("".join(t for t, _ in runs)))
+                if fondo is None and es_apartado and fondo_base:
+                    fondo = fondo_base
+
+                elemento = {
+                    "tipo": "texto",
+                    "runs": runs,
+                    "tamano": max(estilo[1] for _, estilo in runs),
+                    "alineacion": _alineacion(bloque, pagina.rect.width),
+                    "fondo": fondo,
+                }
+                if es_apartado and fondo:
+                    elemento["padding"] = "15px"     # el bloque de fondo respira
+                elementos.append(elemento)
 
             # Una tabla sin bloques de texto propios se añade igualmente
             for indice, (_, filas, cabecera) in enumerate(tablas):
@@ -389,7 +462,7 @@ def extraer_bloques_pdf(pdf_path: str, paginas_omitidas=None) -> list:
                         "filas": filas,
                         "cabecera": cabecera,
                     })
-    return elementos
+    return elementos, variables
 
 
 def _es_marcador_suelto(runs: list) -> bool:
@@ -457,6 +530,11 @@ def _dividir_romanos(runs: list) -> tuple:
     if not apartados:
         return None, None
     return (partes[0] or None), apartados
+
+
+# ===========================================================================
+# LÓGICA DE GENERACIÓN DE HTML/CSS
+# ===========================================================================
 
 
 def _estilo_a_css(estilo: tuple) -> str:
@@ -590,17 +668,45 @@ def _quitar_duplicados_consecutivos(nodos: list) -> list:
     return limpios
 
 
+def _estilo_dominante(items: list):
+    """Devuelve el estilo más frecuente entre todos los runs de una lista."""
+    frecuencia = {}
+    for runs in items:
+        for _, estilo in runs:
+            frecuencia[estilo] = frecuencia.get(estilo, 0) + 1
+    if not frecuencia:
+        return None
+    return max(frecuencia, key=frecuencia.get)
+
+
+def _atributo_color_lista(items: list, conteo: dict, clases: dict) -> str:
+    """Color del elemento <ol>/<ul> para que los marcadores lo hereden.
+
+    Los marcadores (puntos y números) toman el color del elemento de la lista,
+    no del <span> interior, por lo que si no se fija el color en el padre el
+    navegador los pinta en negro. Se aplica la clase del estilo dominante si
+    existe o, si no, un color inline extraído de ese mismo estilo.
+    """
+    estilo = _estilo_dominante(items)
+    if estilo is None:
+        return ""
+    if conteo.get(estilo, 0) >= MIN_USOS_PARA_CLASE and estilo in clases:
+        return f' class="{clases[estilo]}"'
+    return f' style="color: {estilo[2]};"'
+
+
 def _elemento_html(etiqueta: str, runs: list, conteo: dict, clases: dict,
                    indent: str = "        ", id_elemento=None, href=None,
-                   segmentos=None, alineacion=None, fondo=None) -> str:
+                   segmentos=None, alineacion=None, fondo=None,
+                   padding=None) -> str:
     """Construye una etiqueta HTML a partir de los runs de un bloque.
 
     Si el bloque tiene un único estilo, este se aplica a la etiqueta; si tiene
     varios (negritas, colores...), solo esas partes se envuelven en <span>
     sin romper el párrafo. Admite un id (ancla), un enlace que envuelve todo el
     contenido (href) o varios enlaces parciales dentro del texto (segmentos).
-    La alineación y el color de fondo del bloque se aplican como estilo inline
-    del propio elemento.
+    La alineación, el color de fondo y el relleno del bloque se aplican como
+    estilo inline del propio elemento.
     """
     atributo_id = f' id="{id_elemento}"' if id_elemento else ""
 
@@ -609,6 +715,8 @@ def _elemento_html(etiqueta: str, runs: list, conteo: dict, clases: dict,
         declaraciones.append(f"text-align: {alineacion}")
     if fondo:
         declaraciones.append(f"background-color: {fondo}")
+    if padding:
+        declaraciones.append(f"padding: {padding}")
     bloque_css = "; ".join(declaraciones) + ";" if declaraciones else ""
     atributo_bloque = f' style="{bloque_css}"' if bloque_css else ""
 
@@ -649,7 +757,7 @@ def _agrupar_nodos(bloques: list, tamano_cuerpo: float) -> list:
     ultimo_texto = None
 
     def anadir(runs: list, tamano: float, alineacion: str = None,
-               fondo: str = None, tipo_lista=None) -> None:
+               fondo: str = None, tipo_lista=None, padding: str = None) -> None:
         """Añade un bloque, descartando los duplicados consecutivos."""
         nonlocal ultimo_texto
         texto = "".join(t for t, _ in runs)
@@ -670,6 +778,7 @@ def _agrupar_nodos(bloques: list, tamano_cuerpo: float) -> list:
                 "runs": runs,
                 "alineacion": alineacion,
                 "fondo": fondo,
+                "padding": padding,
             })
         ultimo_texto = texto
 
@@ -687,12 +796,13 @@ def _agrupar_nodos(bloques: list, tamano_cuerpo: float) -> list:
         tamano = bloque["tamano"]
         alineacion = bloque["alineacion"]
         fondo = bloque["fondo"]
+        padding = bloque.get("padding")
 
         # Índice con varios apartados romanos en la misma línea
         prefijo, apartados = _dividir_romanos(runs)
         if apartados:
             if prefijo:
-                anadir(prefijo, tamano, alineacion, fondo)
+                anadir(prefijo, tamano, alineacion, fondo, padding=padding)
             for apartado in apartados:
                 anadir(apartado, tamano, tipo_lista="ol")
             continue
@@ -701,7 +811,8 @@ def _agrupar_nodos(bloques: list, tamano_cuerpo: float) -> list:
         if not runs or _es_marcador_suelto(runs):
             # Bloques vacíos o formados solo por una viñeta suelta: se descartan
             continue
-        anadir(runs, tamano, alineacion, fondo, tipo_lista=tipo_lista)
+        anadir(runs, tamano, alineacion, fondo, tipo_lista=tipo_lista,
+               padding=padding)
 
     return nodos
 
@@ -924,11 +1035,16 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
       descarta para no duplicarlo.
     - El contenido se agrupa en secciones <div class="seccion-bloque">: cada
       título principal (H1) abre una sección que engloba lo que le sigue.
-    - ``paginas_omitidas`` permite excluir páginas concretas (1 = primera);
-      si es None o está vacío se procesan todas las páginas.
+    - Las listas romanas se emiten como <ol type="I"> y su color se aplica al
+      propio <ol>/<ul> para que los marcadores no salgan en negro.
+    - Los títulos "APARTADO N" reciben el color de fondo (detectado o extraído
+      de las instrucciones) con un relleno de 15px.
+    - ``paginas_omitidas`` permite excluir páginas concretas (1 = primera); esas
+      páginas no se imprimen pero se analizan para extraer las variables de
+      estilo (colores) que se aplican como base al resto del documento.
     """
     nombres_imagenes = nombres_imagenes or []
-    bloques = extraer_bloques_pdf(pdf_path, paginas_omitidas)
+    bloques, variables = extraer_bloques_pdf(pdf_path, paginas_omitidas)
 
     # --- Tamaño del cuerpo = tamaño con más texto en el documento -----------
     volumen = {}
@@ -979,6 +1095,12 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
     ]
     salida += [f"        {regla}" for regla in CSS_BASE]
 
+    # Color de texto base extraído de las instrucciones (página de análisis)
+    if variables.get("texto"):
+        salida.append("")
+        salida.append("        /* Color base extraído de las instrucciones */")
+        salida.append(f"        .contenido {{ color: {variables['texto']}; }}")
+
     if clases:
         salida.append("")
         salida.append("        /* Clases generadas a partir de estilos repetidos */")
@@ -1001,6 +1123,7 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
     seccion_abierta = False
 
     def cerrar_seccion() -> None:
+        """Cierra la sección <div class="seccion-bloque"> si está abierta."""
         nonlocal seccion_abierta
         if seccion_abierta:
             salida.append("        </div>")
@@ -1018,8 +1141,12 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
             salida += _tabla_html(nodo["filas"], nodo["cabecera"], indent=indent)
         elif nodo["tipo"] == "lista":
             etiqueta = "ol" if nodo["ordenada"] else "ul"
+            # Las listas ordenadas son romanas: <ol type="I">
+            atributo_tipo = ' type="I"' if etiqueta == "ol" else ""
+            # El color va en el padre para que los marcadores lo hereden
+            atributo_color = _atributo_color_lista(nodo["items"], conteo, clases)
             enlaces = nodo.get("enlaces_item")
-            salida.append(f"{indent}<{etiqueta}>")
+            salida.append(f"{indent}<{etiqueta}{atributo_tipo}{atributo_color}>")
             for posicion, runs in enumerate(nodo["items"]):
                 salida.append(_elemento_html(
                     "li", runs, conteo, clases, indent=indent + "    ",
@@ -1031,6 +1158,7 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
                 nodo["etiqueta"], nodo["runs"], conteo, clases, indent=indent,
                 id_elemento=nodo.get("id"), segmentos=nodo.get("segmentos"),
                 alineacion=nodo.get("alineacion"), fondo=nodo.get("fondo"),
+                padding=nodo.get("padding"),
             ))
 
         emitidos += 1
@@ -1054,10 +1182,16 @@ def construir_html(pdf_path: str, nombres_imagenes=None, paginas_omitidas=None) 
     return "\n".join(salida) + "\n"
 
 
+# ===========================================================================
+# INTERFAZ GRÁFICA (GUI)
+# ===========================================================================
+
+
 class PdfToHtmlApp(ctk.CTk):
     """Ventana principal de la aplicación."""
 
     def __init__(self) -> None:
+        """Inicializa el estado interno, la ventana y todos los paneles."""
         super().__init__()
 
         # Estado interno de la aplicación
