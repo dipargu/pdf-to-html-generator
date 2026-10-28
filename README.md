@@ -40,11 +40,11 @@ Sigue estos pasos desde la terminal, en el directorio donde quieras alojar el pr
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/usuario/pdf-a-html-app.git
+git clone https://github.com/dipargu/pdf-a-html-app.git
 cd pdf-a-html-app
 ```
 
-> Sustituye la URL por la de tu repositorio.
+
 
 ### 2. Crear un entorno virtual
 
