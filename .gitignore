@@ -1,0 +1,109 @@
+# =========================
+# Entornos virtuales
+# =========================
+venv/
+.venv/
+env/
+.env.d/
+virtualenv/
+ENV/
+*.egg-info/
+.eggs/
+
+# =========================
+# Python / bytecode / cachés
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+.python-version
+
+# Empaquetado / builds
+build/
+dist/
+develop-eggs/
+wheels/
+share/python-wheels/
+pip-wheel-metadata/
+MANIFEST
+
+# =========================
+# Herramientas de testing / análisis
+# =========================
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.cache/
+
+# =========================
+# Entornos y secretos
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Sistema operativo
+# =========================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# =========================
+# Editores / IDE
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+
+# =========================
+# Datos del proyecto (PDF/HTML)
+# =========================
+# PDFs sueltos usados para pruebas
+*.pdf
+
+# Directorios generados dinámicamente por el script
+# (carpetas de entrada/salida y de pruebas)
+prueba/
+pruebas/
+input/
+entrada/
+output/
+salida/
+exports/
+export/
+resultados/
+results/
+tmp/
+temp/
+*.html
