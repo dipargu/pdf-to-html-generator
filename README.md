@@ -1,110 +1,77 @@
-# PDF → HTML
+# PDF → HTML Converter
 
-Herramienta de escritorio (GUI) que convierte un archivo PDF en un sitio HTML listo
-para publicar, conservando la estructura del documento original: títulos, párrafos,
-listas, **tablas** y estilos.
+> **Status:** Work in Progress (core conversion works; layout edge cases and extra features are still being refined).
 
-## Descripción
+Desktop GUI tool built with Python and PyMuPDF that converts PDF files into clean HTML pages while keeping the original document structure: headings, paragraphs, lists, tables, and styles.
 
-La aplicación analiza el PDF página a página con PyMuPDF y genera un `index.html`
-semántico junto a una carpeta `imagenes/` con los recursos copiados. Entre sus
-características principales:
+## Overview
 
-- **Detección de tablas**: usa `page.find_tables()` para reconstruir las tablas como
-  HTML semántico (`<table>`, `<tr>`, `<th>` y `<td>`), evitando que su texto aparezca
-  duplicado.
-- **Clases CSS inteligentes**: los estilos que se repiten en el documento se agrupan
-  en clases (`.estilo-1`, `.estilo-2`, …) dentro de un `<style>`; los estilos únicos se
-  aplican inline. Así el HTML queda limpio y ligero.
-- **Secciones lógicas**: el contenido se agrupa en bloques `<div class="seccion-bloque">`
-  encabezados por cada título principal.
-- **Páginas de instrucciones**: las páginas marcadas como "a omitir" no se imprimen,
-  pero sí se analizan para extraer los colores base (`Color de fondo de los bloques`,
-  `El color del texto`) que se aplican al resto del documento.
-- **Navegación interna**: se añaden anclajes (`inicio`, `indice`, `apartadoN`, `final`)
-  y se enlazan automáticamente los textos de navegación y el correo del autor.
+The app parses a PDF page by page using PyMuPDF and generates a semantic `index.html` file along with an `imagenes/` folder for selected assets. Originally built to automate converting structured guides and formatted documents into web pages.
 
-## Requisitos previos
+### Current Features
 
-- **Python 3.9 o superior** instalado en el sistema.
-  Puedes comprobarlo con:
+- **Table detection:** Uses `page.find_tables()` to rebuild tables as semantic HTML (`<table>`, `<tr>`, `<th>`, `<td>`) without duplicating cell text.
+- **Reusable CSS classes:** Repeated styles across the document are grouped into CSS classes (`.estilo-1`, `.estilo-2`, ...) inside a `<style>` block, while unique styles stay inline to keep the output light.
+- **Logical sections:** Groups content into `<div class="seccion-bloque">` containers headed by each main title.
+- **Style extraction from skipped pages:** Pages marked as "skip" are not rendered in the final HTML, but are still parsed to extract base theme colors (background and text colors) from template/instruction pages.
+- **Internal navigation:** Automatically adds anchor links (`inicio`, `indice`, `apartadoN`, `final`) and turns navigation text and author emails into clickable links.
 
-  ```bash
-  python --version
-  ```
+## Requirements
 
-## Instalación
+- **Python 3.9 or higher** (`python --version`)
 
-Sigue estos pasos desde la terminal, en el directorio donde quieras alojar el proyecto.
+## Installation
 
-### 1. Clonar el repositorio
+1. Clone the repository:
 
 ```bash
-git clone https://github.com/dipargu/pdf-a-html-app.git
+git clone [https://github.com/dipargu/pdf-a-html-app.git](https://github.com/dipargu/pdf-a-html-app.git)
 cd pdf-a-html-app
 ```
 
-
-
-### 2. Crear un entorno virtual
+2. Create and activate a virtual environment:
 
 ```bash
 python -m venv venv
 ```
 
-### 3. Activar el entorno virtual
+- **Windows (PowerShell):** `venv\Scripts\Activate.ps1`
+- **Windows (CMD):** `venv\Scripts\activate.bat`
+- **Linux / macOS:** `source venv/bin/activate`
 
-**Windows (PowerShell):**
-
-```powershell
-venv\Scripts\Activate.ps1
-```
-
-**Windows (CMD):**
-
-```bat
-venv\Scripts\activate.bat
-```
-
-**Linux / macOS:**
-
-```bash
-source venv/bin/activate
-```
-
-### 4. Instalar las dependencias
+3. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Uso
+## Usage
 
-Ejecuta la aplicación:
+Run the application:
 
 ```bash
 python main.py
 ```
 
-Se abrirá una ventana con los siguientes campos:
-
-| Campo | Para qué sirve |
+| Field | Description |
 | --- | --- |
-| **1. Archivo PDF** | Selecciona el PDF de origen que se va a convertir. Pulsa **Cargar PDF**. |
-| **Páginas a omitir (ej: 1 o 1,2)** | Números de las páginas que **no** se imprimirán (1 = primera). Se pueden indicar varias separadas por comas, punto y coma o espacios (`1`, `1,2`, `1; 3`). Déjalo vacío para procesar todo. Esas páginas se siguen analizando para extraer los colores base. |
-| **2. Imágenes** | Selecciona una o varias imágenes (logotipos, ilustraciones…). Se copian a la carpeta `imagenes/` y se insertan en el HTML intercaladas entre los bloques de texto. |
-| **3. Nombre del proyecto** | Nombre de la carpeta que se creará con el resultado. |
-| **Generar** | Pregunta dónde guardar el proyecto y crea allí la carpeta con el `index.html` y la subcarpeta `imagenes/`. |
+| **1. PDF File** | Select the source PDF file to convert. |
+| **Pages to skip** | Optional page numbers to exclude from rendering (e.g. `1`, `1,2`, `1; 3`). Leave empty to process all pages. Skipped pages are still scanned for base colors. |
+| **2. Images** | Select one or more images (logos, illustrations). They are copied to `imagenes/` and inserted between text blocks. |
+| **3. Project name** | Name of the output folder. |
+| **Generate** | Prompts for a destination directory and creates the project folder with `index.html` and `imagenes/`. |
 
-### Resultado
+### Output Structure
 
-Al finalizar se genera la siguiente estructura dentro de la carpeta que hayas elegido:
-
-```
-<destino>/<nombre-del-proyecto>/
+```text
+<destination>/<project-name>/
 ├── index.html
 └── imagenes/
-    ├── ...
+    └── ...
 ```
 
-Abre `index.html` en cualquier navegador para ver el resultado.
+## Planned Improvements
+
+- Improve layout handling for complex multi-column PDFs.
+- Extract embedded PDF images automatically into the output folder.
+- Generalize color and anchor detection for non-template documents.
