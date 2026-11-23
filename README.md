@@ -25,8 +25,8 @@ The app parses a PDF page by page using PyMuPDF and generates a semantic `index.
 1. Clone the repository:
 
 ```bash
-git clone [https://github.com/dipargu/pdf-a-html-app.git](https://github.com/dipargu/pdf-a-html-app.git)
-cd pdf-a-html-app
+git clone https://github.com/dipargu/pdf-to-html-generator.git
+cd pdf-to-html-generator
 ```
 
 2. Create and activate a virtual environment:
